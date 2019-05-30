@@ -9,7 +9,7 @@ require "var.pl";
 
 my $tbl_watch = $ARGV[0];
 
-our $idata_dw='idata_dw';
+our $idata_dw='idata';
 our $impala_host;
 our $impala_port;
 our $mysql_port;
