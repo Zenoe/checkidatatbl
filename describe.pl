@@ -10,7 +10,7 @@ require "util.pl";
 
 my $update = $ARGV[0];
 
-my $filename="./tbl_col_type.dat";
+our $filename;
 
 if ($update eq 1 || ! -e $filename){
     dump_tbl_col();

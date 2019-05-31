@@ -11,3 +11,6 @@ our $mysql_port=63306;
 our $mysql_pwd='rjbigdata';
 
 our $idata_dw='idata';
+
+our $filename="./tbl_col_type.dat";
+our $outputfilename="./checktblres.csv";

@@ -1,19 +1,52 @@
 #!/usr/bin/perl
 #
-use warnings;
 use 5.010;
+use warnings;
 use Storable;
-
+use Getopt::Long;
 use Data::Dumper;
+
 require "var.pl";
 
-my $tbl_watch = $ARGV[0];
 
-our $idata_dw='idata';
+my $tbl_watch = '';
+my $retry=0;
+my $refresh=0;
+my $help=0;
+GetOptions( 'tbl=s' => \ $tbl_watch
+          , 'retry' => \ $retry
+          , 'refresh' => \ $refresh
+          , 'h' => \ $help
+          );
+
+if ($help){
+    usage();
+    exit;
+}
+
+our $idata_dw;
 our $impala_host;
 our $impala_port;
 our $mysql_port;
 our $mysql_pwd;
+our $filename;
+our $outputfilename;
+
+if (! -e $filename or $refresh) {
+    say "generate table's meta info";
+    system('./describe.pl');
+}
+
+my %tbl_already_output={};
+if ( -e $outputfilename ){
+    open ( my $in, "<:encoding(utf8)", $outputfilename ) or die "$outputfilename: $!";
+    while (my $line = <$in>) {
+        chomp $line;
+        my ( $tblname )= $line =~ /(^.+):.+/;
+        $tbl_already_output{$tblname}=1;
+    }
+    close $in;
+}
 
 my %timeparam = GenTimeParam(time());
 my %lasttimeparam = GenTimeParam(time()-(60*60));
@@ -31,8 +64,8 @@ sub SelectCount{
     my $tbl_cond1='';
     my $tbl_cond2='';
     if ($tbl_name){
-        $tbl_cond1.= "and t.TBL_NAME=\"$tbl_name\"";
-        $tbl_cond2.= "and TBL_NAME = \"$tbl_name\""
+        $tbl_cond1.= "and t.TBL_NAME like \"$tbl_name\%\"";
+        $tbl_cond2.= "and TBL_NAME  like  \"$tbl_name\%\""
     }
 
 
@@ -54,14 +87,23 @@ sub SelectCount{
         }
     }
 
-    my $output="checktblres.csv";
-    open(my $houtput, '>', $output) or die $!;
+    my $houtput;
+    if ($retry){
+        open($houtput, '>>', $outputfilename) or die $!;
+    }else{
+        open($houtput, '>', $outputfilename) or die $!;
+    }
 
     while ( ($key, $value) = each %col ) {
         # print "$key => @$value\n";
         # print $value->[0], "\n";
         $_=$key;
         if (/^tmp_/){
+            next;
+        }
+
+        if ($retry and $tbl_already_output{$key}){
+            # skip tables that's checked last time
             next;
         }
         my $checkres=&executeSql($key, @$value);
@@ -153,3 +195,12 @@ sub processQueryRes{
     return "$tbl:$res";
 }
 
+sub usage{
+    print "check all tables to print the count of the record with the time conditions
+-tbl: specify table's name need to be checked. prefix matching is supported
+-retry: continue to check
+-refresh: regenerate table's meta info
+-h: print this message
+example: ./tblchk.pl -tbl ods
+will check all tables prefix with 'ods'"
+}
