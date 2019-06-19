@@ -3,6 +3,8 @@
 use strict;
 use warnings;
 use 5.010;
+use utf8;
+use open ':std', ':encoding(UTF-8)';
 
 sub ALog{
     my($filename, $content, $mode)=@_;
@@ -13,6 +15,18 @@ sub ALog{
         open($fh, "+>>",$filename);
     }
     print $fh $content."\n";
+}
+
+sub writeTo{
+    my($filename, $content, $mode)=@_;
+    my $fh;
+    if($mode){
+        open($fh, $mode,$filename);
+    }else{
+        open($fh, ">",$filename);
+    }
+    print $fh $content;
+
 }
 
 sub makeArrHashFromArray{

@@ -5,7 +5,10 @@ use warnings;
 use Storable;
 use Getopt::Long;
 use Data::Dumper;
+
+# All use utf8; does is tell Perl the source code is encoded using UTF-8. You need to tell Perl how to encode your text:
 use utf8;
+use open ':std', ':encoding(UTF-8)';
 
 use constant {
     RESVALUE => 0,
@@ -14,20 +17,28 @@ use constant {
     RESARRAY => 3,
 };
 
-my $file2parse = '';
-my $help=0;
+
+require "util.pl";
+
+my $request_prefix="/api";
 my $modelName = 'experienceInsight';
 my $submodelName = 'wifiuser';
+
+my %pairsymbol=("]"=> "[", "}" =>"{");
+my $file2parse = '';
+my $help=0;
+
 GetOptions( 'f=s' => \ $file2parse
-          , 'h' => \ $help
-          , 'm=s' => \ $modelName
-          );
+            , 'h' => \ $help
+            , 'm=s' => \ $modelName
+    );
 
 if ($help){
     usage();
     exit;
 }
 
+my $lineno=0;
 my @iflist = ();
 
 parseMD();
@@ -37,7 +48,12 @@ sub parseMD{
     # $file2parse is global v
     if ( -e $file2parse ){
         open ( my $in, "<:encoding(utf8)", $file2parse ) or die "$file2parse: $!";
+
+        my $mockContent = "export default \{\n";
+        my $responseContents='';
+
         while (my $line = <$in>) {
+            $lineno = $lineno + 1;
             chomp $line;
             # skip comment
             if ($line =~ /^#/ or $line =~ /^-/){
@@ -46,18 +62,32 @@ sub parseMD{
             $line=~ s/^\s+//;
             if (my ($httpmethod) = $line =~ /^([gGpP][a-zA-Z]+)\s/){
                 my %interface=();
+
+                # /xxx/xxx/xxx
                 my ($reqpath) = $line =~ /(\/.+$)/;
+
+                # last part of path
                 my ($funcname) = $reqpath =~ /\/([a-zA-Z0-9_]+$)/;
+
                 $interface{'method'} = uc $httpmethod;
                 $interface{'reqpath'} = $reqpath;
                 $interface{'func'} = $funcname;
                 my @params = seekparam($in);
-                my $restype = seekdata($in);
+                my ( $restype, $response) = seekdata($in);
                 $interface{'datatype'} = $restype;
                 $interface{'params'} = \@params;
+                # $responseContents .= "$response,\n";
+
+                $mockContent .= "\'$httpmethod $request_prefix$reqpath\':\n";
+                $mockContent .= "$response,\n";
                 push(@iflist, \%interface);
+
             }
         }
+
+        $mockContent = "$mockContent\n\}";
+        say "------------------------------mock";
+        writeTo("mock.js", $mockContent);
 
         # print Dumper(\@iflist);
         close $in;
@@ -68,13 +98,45 @@ sub seekparam{
     my ($in) = @_;
     my $parambegin=0;
     my @params=();
+    my @stk;
     while( my $line = <$in> ){
+        $lineno = $lineno + 1;
         chomp $line;
         $line=~ s/^\s+|\s+$//g;
-        if ($line =~ /^\}/ and $parambegin == 1){
-            # print Dumper(\@params);
-            return @params;
+        # if ($line =~ /^参数/){
+        #     say "------------find param";
+        # }
+
+        # if ($line =~ /^\}/ and $parambegin == 1){
+        #     # print Dumper(\@params);
+        #     return @params;
+        # }
+
+        if(skipletter($line)){
+            next;
         }
+
+        foreach my $char (split //, $line){
+            if ($char eq "{" or $char eq "["){
+                push(@stk, $char);
+                next;
+            }else{
+
+                my $possible = $pairsymbol{$char};
+                if($possible){
+                    my $x = pop(@stk);
+                    if (! $x eq $possible){
+                        parseerror("expect $possible, but we get $x", 1);
+                    }
+
+                    if (! @stk){
+                        return @params;
+                    }
+                    next;
+                }
+            }
+        }
+
         if ($line =~ /^\{/){
             # reach data section
             if ($parambegin == 0){
@@ -95,19 +157,49 @@ sub seekdata{
     my ($in) = @_;
     my $databegin=0;
     my $datatype = 0;
+    my $responseContent = '';
+    my @stk;
+
+
     while( my $line = <$in> ){
+        $lineno = $lineno + 1;
         chomp $line;
         $line=~ s/^\s+|\s+$//g;
-        if ($line =~ /^\}/ and $databegin == 1){
-            return $datatype;
-            last;
+        # remove comment //***
+        $line=~ s/(.*)\/\/.*/\1/;
+
+        if(skipletter($line)){
+            next;
         }
+
+        $responseContent .= $line;
+
+        foreach my $char (split //, $line){
+            if ($char eq "{" or $char eq "["){
+                push(@stk, $char);
+                next;
+            }else{
+
+                my $possible = $pairsymbol{$char};
+                if($possible){
+                    my $x = pop(@stk);
+                    if (! $x eq $possible){
+                        parseerror("expect $possible, but we get $x", 1);
+                    }
+
+                    if (! @stk){
+                        return ( $datatype, $responseContent );
+                    }
+                    next;
+                }
+            }
+        }
+
+
         if ($line =~ /^\"data\"/){
             # reach data section
             if ($databegin == 0){
                 $databegin = 1;
-            }else{
-                ParseError("unexpected data section");
             }
             # datatype?
             my $lastchar = substr $line, -1;
@@ -126,6 +218,23 @@ sub seekdata{
             next;
         }
     }
+
+
+    print Dumper(\@stk);
+    return ( $datatype, $responseContent );
+}
+
+sub skipletter{
+    my ( $ch ) = @_;
+    if ($ch =~ /^#/ or $ch =~ /^-/ or $ch =~ /^`/){
+        return 1;
+    }
+
+    if ($ch =~ /^(\p{Han}+)/ ) {
+        return 1;
+    }
+
+    return 0;
 }
 
 sub defvalue{
@@ -158,16 +267,16 @@ sub generateJSScript{
 
         my $var = $varname . ':' . defvalue($_->{'datatype'});
         my $effect = "  *$funcname({payload}, { call, put }) {
-      const response = yield call($funcname, payload);
-      if(response&&response.success){
+        const response = yield call($funcname, payload);
+        if(response&&response.success){
         yield put({
-          type: 'update',
-          payload: {
-            $varname: response.data
-          }
-        });
+      type: 'update',
+        payload: {
+        $varname: response.data
       }
-    },\n\n";
+              });
+        }
+                                                                       },\n\n";
 
         my $serviceparam = '';
         my $bodypart ='';
@@ -193,27 +302,27 @@ sub generateJSScript{
 
         if ($_->{'method'} =~ /POST/){
             $bodypart .= "\n    body: \{
-      ...params
-    \},";
+            ...params
+                \},";
         }
 
         my $service = "export async function $funcname(params) {
-  return request(`\${API_URL}/api/wifiuser/$funcname/$serviceparam`, {
-    method: '$_->{'method'}',$bodypart
-  });
-}\n
-";
+        return request(`\${API_URL}/api/$submodelName/$funcname/$serviceparam`, {
+      method: '$_->{'method'}',$bodypart
+                   });
+            }\n
+                ";
 
         $requestContent .= "export function request$funcname(props $reqfunArguments) {
-  const {dispatch} = props
-    const payload = {
+        const {dispatch} = props
+            const payload = {
         $payloadmap}
 
-    dispatch({
+        dispatch({
       type: '$submodelName/$funcname',
-      payload: payload
-    })
-}\n\n";
+        payload: payload
+             })
+            }\n\n";
         $effects .= $effect;
         $variables .= $var;
         $variables .= ",\n";
@@ -231,30 +340,32 @@ sub generateJSScript{
   },";
 
     $modelContent .= "
-  effects: {
-$effects
-},
-";
+    effects: {
+    $effects
+  },
+      ";
 
     $modelContent .= "
 
-  reducers: {
+    reducers: {
     update(state, payload)
     {
-      return {
-        ...state,
+    return {
+    ...state,
         ...payload.payload
-      }
+    }
     }
   }
 };\n";
     say "model---------------------";
-    # say $modelContent;
+    writeTo("model.js", $modelContent);
     say "services------------------";
-    say $serviceContent;
+    writeTo("service.js", $serviceContent);
     say "request-------------------";
-    # say $requestContent;
+    writeTo("request.js", $requestContent);
 }
+
+
 sub usage{
     print "parse md file to produce some js interfaces files
 -f: provide the file name
@@ -264,6 +375,9 @@ sub usage{
 
 
 sub ParseError{
-    my ($errmsg) = @_;
-    say $errmsg;
+    my ($errmsg, $fatel) = @_;
+    say $errmsg, ", line: $lineno";
+    if($fatel){
+        exit 1;
+    }
 }
