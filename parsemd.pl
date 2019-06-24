@@ -5,6 +5,7 @@ use warnings;
 use Storable;
 use Getopt::Long;
 use Data::Dumper;
+use Text::Balanced qw/extract_multiple extract_bracketed/;
 
 # All use utf8; does is tell Perl the source code is encoded using UTF-8. You need to tell Perl how to encode your text:
 use utf8;
@@ -31,6 +32,7 @@ my $help=0;
 GetOptions( 'f=s' => \ $file2parse
             , 'h' => \ $help
             , 'm=s' => \ $modelName
+            , 's=s' => \ $submodelName
     );
 
 if ($help){
@@ -77,8 +79,14 @@ sub parseMD{
                 $interface{'datatype'} = $restype;
                 $interface{'params'} = \@params;
                 # $responseContents .= "$response,\n";
+                #
+                my $datamember = parseObjMembers($restype, $response);
+                my $paramWildcard = '';
+                foreach (@params){
+                    $paramWildcard.= "/*";
+                }
 
-                $mockContent .= "\'$httpmethod $request_prefix$reqpath\':\n";
+                $mockContent .= "\'$httpmethod $request_prefix$reqpath$paramWildcard\':\n";
                 $mockContent .= "$response,\n";
                 push(@iflist, \%interface);
 
@@ -92,6 +100,34 @@ sub parseMD{
         # print Dumper(\@iflist);
         close $in;
     }
+}
+
+sub parseObjMembers{
+    my ($datatype, $memberStr) = @_;
+    if($datatype == RESARRAY){
+        return;
+    }
+    say $memberStr;
+    if ($datatype == RESOBJECT){
+        # strip surrounding curly brackets
+        my ($datasec) = $memberStr =~ /.*\"data\"[\s*:]*\{(.+)[\}]{2}/;
+        say $datasec;
+
+        # number to 0
+        $datasec =~ s/:\d+,/: 0,/g;
+
+        # string to null string
+        $datasec =~ s/:\".*?\"(,|$)/: \"\",/g;
+
+        # remove space after ,
+        $datasec =~ s/,\s?/,\n/g;
+
+        writeTo("datasec", $datasec);
+        return $datasec;
+    }elsif($datatype == RESVALUE){
+        return 0;
+    }
+    return;
 }
 
 sub seekparam{
@@ -166,7 +202,7 @@ sub seekdata{
         chomp $line;
         $line=~ s/^\s+|\s+$//g;
         # remove comment //***
-        $line=~ s/(.*)\/\/.*/\1/;
+        $line=~ s/(.*)\/\/.*/$1/;
 
         if(skipletter($line)){
             next;
@@ -202,6 +238,7 @@ sub seekdata{
                 $databegin = 1;
             }
             # datatype?
+            # todo  parse the char immediately after "data", not the lastchar  (eg: data[{)
             my $lastchar = substr $line, -1;
             if ($lastchar eq '{' ){
                 $datatype = RESOBJECT;
@@ -261,6 +298,7 @@ sub generateJSScript{
 
     foreach (@iflist){
         my $funcname = $_->{'func'};
+        my $reqpath = $_->{'reqpath'};
         my $varname = $funcname . 'data ';
         $modelContent .= $funcname;
         $modelContent .= ",\n";
@@ -268,7 +306,7 @@ sub generateJSScript{
         my $var = $varname . ':' . defvalue($_->{'datatype'});
         my $effect = "  *$funcname({payload}, { call, put }) {
         const response = yield call($funcname, payload);
-        if(response&&response.success){
+        if(response&&response.success&&response.data){
         yield put({
       type: 'update',
         payload: {
@@ -294,7 +332,7 @@ sub generateJSScript{
             }
 
             # trim the last one ','
-            $reqfunArguments =~ s/(.+),$/\1/;
+            $reqfunArguments =~ s/(.+),$/$1/;
             if ($reqfunArguments){
                 $reqfunArguments = ','.$reqfunArguments;
             }
@@ -307,7 +345,7 @@ sub generateJSScript{
         }
 
         my $service = "export async function $funcname(params) {
-        return request(`\${API_URL}/api/$submodelName/$funcname/$serviceparam`, {
+        return request(`\${API_URL}$request_prefix$reqpath/$serviceparam`, {
       method: '$_->{'method'}',$bodypart
                    });
             }\n
