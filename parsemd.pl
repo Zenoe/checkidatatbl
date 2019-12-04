@@ -1,5 +1,7 @@
 #!/usr/bin/perl
 #
+# todo: post mock got /*/*/
+# todo: /api/api/..
 use 5.010;
 use warnings;
 use Storable;
@@ -22,8 +24,7 @@ use constant {
 require "util.pl";
 
 my $request_prefix="/api";
-my $modelName = 'experienceInsight';
-my $submodelName = 'wifiuser';
+my $modelName = '';
 
 my %pairsymbol=("]"=> "[", "}" =>"{");
 my $file2parse = '';
@@ -32,12 +33,16 @@ my $help=0;
 GetOptions( 'f=s' => \ $file2parse
             , 'h' => \ $help
             , 'm=s' => \ $modelName
-            , 's=s' => \ $submodelName
     );
 
 if ($help){
     usage();
     exit;
+}
+
+if(length($modelName) == 0 or length($file2parse) == 0){
+   say "filename and module name are required" ;
+   exit;
 }
 
 my $lineno=0;
@@ -66,6 +71,8 @@ sub parseMD{
                 my %interface=();
 
                 # /xxx/xxx/xxx
+                # remove traling slash (if exist)
+                $line =~ s|/$||;
                 my ($reqpath) = $line =~ /(\/.+$)/;
 
                 # last part of path
@@ -94,7 +101,7 @@ sub parseMD{
         }
 
         $mockContent = "$mockContent\n\}";
-        say "------------------------------mock";
+        say "------------------------------mock\n";
         writeTo("mock.js", $mockContent);
 
         # print Dumper(\@iflist);
@@ -183,7 +190,9 @@ sub seekparam{
             next;
         }
 
-        if (my ( $paramname ) = $line =~ /^"(\w+)":.+/){
+
+        # param name may be inside double quotes or not
+        if (my ( $paramname ) = $line =~ /^"?(\w+)"?:.+/){
             push (@params, $paramname);
         }
     }
@@ -296,10 +305,17 @@ sub generateJSScript{
     my $serviceContent = "import request from '../../utils/oauthFetch';\n\n";
     my $requestContent ='';
 
+
+    print Dumper(\@iflist);
     foreach (@iflist){
         my $funcname = $_->{'func'};
         my $reqpath = $_->{'reqpath'};
-        my $varname = $funcname . 'data ';
+        my $varname = $funcname . 'Data ';
+        my ($tmpname) = $varname =~ /[gsSG]et(.*)/;
+        if( $tmpname ){
+            $varname = $tmpname;
+        }
+        $varname = lcfirst($varname);
         $modelContent .= $funcname;
         $modelContent .= ",\n";
 
@@ -309,9 +325,8 @@ sub generateJSScript{
         if(response&&response.success&&response.data){
         yield put({
       type: 'update',
-        payload: {
-        $varname: response.data
-      }
+        payload: response.data
+
               });
         }
                                                                        },\n\n";
@@ -327,8 +342,8 @@ sub generateJSScript{
                 if ($httpmetohd =~ /GET/){
                     $serviceparam .= "\${params.$_}/";
                 }
-                $reqfunArguments .= " _$_,";
-                $payloadmap .= "$_: _$_,\n";
+                $reqfunArguments .= " $_,";
+                $payloadmap .= "$_,\n";
             }
 
             # trim the last one ','
@@ -357,8 +372,8 @@ sub generateJSScript{
         $payloadmap}
 
         dispatch({
-      type: '$submodelName/$funcname',
-        payload: payload
+      type: '$modelName/$funcname',
+        payload
              })
             }\n\n";
         $effects .= $effect;
@@ -369,10 +384,15 @@ sub generateJSScript{
         # push (@effects, $effect);
         # push (@variables, $var);
     }
-    $modelContent .= "} from '../../services/$modelName/$submodelName';\n\n";
+
+    # if ((length($modelName) > 0) && ( $modelName !~ /\/$/ )){
+    #     $modelName .= "/";
+    # }
+
+    $modelContent .= "} from '../../services/$modelName/$modelName';\n\n";
 
     $modelContent .= "export default {
-  namespace: '$submodelName',
+  namespace: '$modelName',
     state: {
     $variables
   },";

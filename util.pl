@@ -126,4 +126,16 @@ sub makeArrHash{
     return @jobs;
 }
 
+sub fileName{
+    my ( $path ) = @_;
+    # /xxx/xxx/xxx
+    # remove traling slash (if exist)
+    $path =~ s|/$||;
+    ($path) = $path =~ /(\/.+$)/;
+
+    # last part of path
+    my ($fname) = $path =~ /\/([a-zA-Z0-9_]+$)/;
+    return $fname;
+}
+
 1;
