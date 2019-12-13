@@ -126,6 +126,18 @@ sub makeArrHash{
     return @jobs;
 }
 
+sub pathoflast2part{
+    my ( $path ) = @_;
+    # /xxx/xxx/xxx
+    # remove traling slash (if exist)
+    $path =~ s|/$||;
+    ($path) = $path =~ /(\/.+$)/;
+
+    # last part of path
+    my ($fname) = $path =~ /\/([a-zA-Z0-9_]+\/[a-zA-Z0-9_]+$)/;
+    return $fname;
+}
+
 sub fileName{
     my ( $path ) = @_;
     # /xxx/xxx/xxx
@@ -136,6 +148,26 @@ sub fileName{
     # last part of path
     my ($fname) = $path =~ /\/([a-zA-Z0-9_]+$)/;
     return $fname;
+}
+
+
+sub randomData{
+    my @setAscii = ('0' ..'9', 'A' .. 'F');
+    my @setDigit = ('0' ..'9');
+
+
+    my ($datatype) = @_;
+    if($datatype eq "string"){
+        my $str = join '' => map $setAscii[rand @setAscii], 1 .. 8;
+        return $str
+    }elsif($datatype eq "integer" or $datatype eq "float" or $datatype eq "long"){
+        my $str = join '' => map $setDigit[rand @setDigit], 1 .. 8;
+        return $str
+    }elsif($datatype eq "date"){
+        use POSIX;
+        my $year_month_day=strftime("%Y%m%d",localtime());
+        return $year_month_day;
+    }
 }
 
 1;

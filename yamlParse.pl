@@ -21,13 +21,13 @@ use constant {
 
 my $file2parse = '';
 my $request_prefix="/api";
-my $modelName = '';
+my $inputModuleName = '';
 my $help=0;
 
 my @iflist = ();
 
 GetOptions( 'f=s' => \ $file2parse
-            , 'm=s' => \ $modelName
+            , 'm=s' => \ $inputModuleName
             , 'h' => \ $help
     );
 
@@ -36,7 +36,7 @@ if ($help){
     exit;
 }
 
-if(length($modelName) == 0 or length($file2parse) == 0){
+if(length($inputModuleName) == 0 or length($file2parse) == 0){
    say "filename and module name are required" ;
    exit;
 }
@@ -49,6 +49,9 @@ my $config = $yaml->[0];
 my $definitions = $config->{definitions};
 my $moduleName = $config->{basePath};
 
+if(!$moduleName){
+    $moduleName = inputModuleName;
+}
 print "module: $moduleName\n";
 
 my $paths = $config->{paths};
@@ -68,14 +71,16 @@ for (keys %$paths){
             ( $reqpath ) = $reqpath =~ /(.*)\{.*/;
         }
         $interface{'reqpath'} = $reqpath;
-        my $funcname = fileName($reqpath);
+        my $funcname = pathoflast2part($reqpath);
+        $funcname =~ s|/|_|;
         $interface{'method'} = $method;
         $interface{'func'} = $funcname;
 
         # params of http request
         my $requestDetail = $postOrGetHash->{$_};
         my $parametersArray = $requestDetail->{parameters};
-        #print Dumper(\$parametersArray);
+        # say "parametersArray....";
+        # print Dumper(\$parametersArray);
         my @params = ();
         my $i=0;
         for(@$parametersArray){
@@ -83,8 +88,7 @@ for (keys %$paths){
             my $parameterHash = $parametersArray->[$i];
             # parameter hash has keys: in, name, type, schema...
             # print Dumper(\$parameterHash);
-            say $parameterHash->{type};
-            if($parameterHash->{type} eq "object"){
+            if($parameterHash->{type} && $parameterHash->{type} eq "object"){
                 # find schema
                 say $parameterHash->{schema}->{'$ref'};
                 my $schemaPath=$parameterHash->{schema}->{'$ref'};
@@ -112,7 +116,7 @@ for (keys %$paths){
         # print Dumper(\$responseDetail);
         my ($restype, $responseContent) = parseResData(@$responseDetail[1]);
 
-        $mockContent .= "\'$method $request_prefix$reqpath\':\n";
+        $mockContent .= "\'$method $request_prefix$moduleName$reqpath\':\n";
         $mockContent .= '{"success": true,"code": 200,"message": null,"messageDetail": null,"throwable": null,
     "data":';
         if( $restype == RESOBJECT ){
@@ -152,10 +156,10 @@ sub generateJSScript{
         my $funcname = $_->{'func'};
         my $reqpath = $_->{'reqpath'};
         my $varname = $funcname . 'Data ';
-        my ($tmpname) = $varname =~ /[gsSG]et(.*)/;
-        if( $tmpname ){
-            $varname = $tmpname;
-        }
+        # my ($tmpname) = $varname =~ /[gsSG]et(.*)/;
+        # if( $tmpname ){
+        #     $varname = $tmpname;
+        # }
         $varname = lcfirst($varname);
         $modelContent .= $funcname;
         $modelContent .= ",\n";
@@ -182,12 +186,11 @@ sub generateJSScript{
             foreach (@$params){
                 # print Dumper(\$_);
                 my $paramName =  $_->{name};
-                say $httpmetohd;
                 if ($httpmetohd =~ /get/){
                     $serviceparam .= "\${params.$paramName}/";
                 }
-                $reqfunArguments .= " $_,";
-                $payloadmap .= "$_,\n";
+                $reqfunArguments .= " $paramName,";
+                $payloadmap .= "$paramName,\n";
             }
 
             # trim the last one ','
@@ -198,25 +201,23 @@ sub generateJSScript{
         }
 
         if ($_->{'method'} =~ /post/){
-            $bodypart .= "\n    body: \{
-            ...params
-                \},";
+            $bodypart .= "\n    body: params,";
         }
 
         my $service = "export async function $funcname(params) {
-        return request(`\${API_URL}$request_prefix$reqpath/$serviceparam`, {
+        return request(`\${API_URL}$request_prefix$moduleName$reqpath$serviceparam`, {
           method: '$_->{'method'}',$bodypart
                    });
             }\n
                 ";
 
-        $requestContent .= "export function request$funcname(props $reqfunArguments) {
+        $requestContent .= "export function req$funcname(props $reqfunArguments) {
         const {dispatch} = props
             const payload = {
         $payloadmap}
 
         dispatch({
-      type: '$modelName/$funcname',
+      type: '$inputModuleName/$funcname',
         payload
              })
             }\n\n";
@@ -229,14 +230,14 @@ sub generateJSScript{
         # push (@variables, $var);
     }
 
-    # if ((length($modelName) > 0) && ( $modelName !~ /\/$/ )){
-    #     $modelName .= "/";
+    # if ((length($inputModuleName) > 0) && ( $inputModuleName !~ /\/$/ )){
+    #     $inputModuleName .= "/";
     # }
 
-    $modelContent .= "} from '../../services/$modelName/$modelName';\n\n";
+    $modelContent .= "} from '../../services/$inputModuleName/$inputModuleName';\n\n";
 
     $modelContent .= "export default {
-  namespace: '$modelName',
+  namespace: '$inputModuleName',
     state: {
     $variables
   },";
@@ -285,6 +286,7 @@ sub parseResData{
     # get properties
     $dataDetail = $in->{properties}->{data};
     if(!$dataDetail){
+        print Dumper(\$in);
         say "error........";
         exit;
     }
@@ -322,7 +324,8 @@ sub parseResData{
         $responseContent = parseResContent(fileName($responseDataRef));
     }else{
         print "response ref not exist";
-        $responseContent = $responseData->{type};
+        my $randTmp = randomData($responseData->{type});
+        $responseContent = "\"$randTmp\"";
     }
     say "responseContent>>>>>>>>>>>>>>>>$responseContent";
 
@@ -352,7 +355,11 @@ sub parseResContent{
     my $properties = $definitions->{$in}->{properties};
     my $demoData;
     for(keys $properties){
-        $demoData .= "\"$_\": $properties->{$_}->{example}";
+        my $exampleData = $properties->{$_}->{example};
+        if(!$exampleData){
+            $exampleData = randomData($properties->{$_}->{type})
+        }
+        $demoData .= "$_: \"$exampleData\",\n";
     }
     return $demoData;
 }
@@ -395,3 +402,16 @@ sub usage{
 -h: print this message
 "
 }
+
+# properties:
+#   data
+#     item
+#       ref
+
+# properties:
+#   data
+#     ref
+
+# properties:
+#   data
+#     type

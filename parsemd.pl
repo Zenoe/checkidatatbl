@@ -211,7 +211,8 @@ sub seekdata{
         chomp $line;
         $line=~ s/^\s+|\s+$//g;
         # remove comment //***
-        $line=~ s/(.*)\/\/.*/$1/;
+        # accidently remove xxx of http://xxx
+        # $line=~ s/(.*)\/\/.*/$1/;
 
         if(skipletter($line)){
             next;
@@ -306,7 +307,6 @@ sub generateJSScript{
     my $requestContent ='';
 
 
-    print Dumper(\@iflist);
     foreach (@iflist){
         my $funcname = $_->{'func'};
         my $reqpath = $_->{'reqpath'};
